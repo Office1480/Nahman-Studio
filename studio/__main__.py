@@ -106,6 +106,7 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = config.load()
+    db.restore_seed(settings.db_path, config.ROOT / "seed" / "studio-seed.db.gz")
     db.init(settings.db_path)
     if args.command == "serve":
         import uvicorn

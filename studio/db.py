@@ -134,9 +134,20 @@ def now() -> str:
 
 
 def restore_seed(path: Path, seed: Path) -> None:
-    """Au tout premier démarrage, part des données embarquées plutôt que d'une base vide."""
-    if path.exists() or not seed.exists():
+    """Au premier démarrage, part des données embarquées. Une base qui contient des transcripts n'est jamais remplacée."""
+    if not seed.exists():
         return
+    if path.exists():
+        conn = sqlite3.connect(path)
+        try:
+            if conn.execute("SELECT COUNT(*) FROM transcripts").fetchone()[0]:
+                return
+        except sqlite3.OperationalError:
+            pass
+        finally:
+            conn.close()
+        for leftover in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+            leftover.unlink(missing_ok=True)
     with gzip.open(seed, "rb") as source, open(path, "wb") as target:
         shutil.copyfileobj(source, target)
 
