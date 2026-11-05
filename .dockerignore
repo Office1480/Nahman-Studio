@@ -1,0 +1,8 @@
+.env
+.git
+data
+dist
+tests
+tools
+__pycache__
+*.pyc

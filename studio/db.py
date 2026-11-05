@@ -1,4 +1,6 @@
+import gzip
 import json
+import shutil
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -110,6 +112,14 @@ _path: Path | None = None
 
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def restore_seed(path: Path, seed: Path) -> None:
+    """Au tout premier démarrage, part des données embarquées plutôt que d'une base vide."""
+    if path.exists() or not seed.exists():
+        return
+    with gzip.open(seed, "rb") as source, open(path, "wb") as target:
+        shutil.copyfileobj(source, target)
 
 
 def init(path: Path) -> None:

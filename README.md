@@ -87,6 +87,18 @@ docker compose up -d --build
 
 Sur un serveur, les sous-titres doivent passer par l'API YouTube : renseigne les clés Google.
 
+### Railway
+
+`railway.json` et le `Dockerfile` suffisent. Au premier démarrage, l'application part des données embarquées
+(`seed/studio-seed.db.gz` : inventaire, transcripts, index et propositions).
+
+1. New Project, Deploy from GitHub repo, `Office1480/Nahman-Studio`.
+2. Variables : `ADMIN_PASSWORD`, `PUBLIC_URL` (l'adresse Railway), et `ANTHROPIC_API_KEY` pour les réponses rédigées.
+3. Ajoute un volume monté sur `/data`, sinon les validations sont perdues à chaque redéploiement.
+4. Settings, Networking, Generate Domain.
+
+Pour rafraîchir les données embarquées : `python tools/export_seed.py`.
+
 ## Limites connues
 
 - Les sous-titres automatiques déforment les mots hébreux. Le glossaire (`studio/glossaire.json`) corrige les erreurs

@@ -15,9 +15,10 @@ from fastapi.staticfiles import StaticFiles
 from . import ai, captions, config, db, embeddings, ingest, pipeline, search, shabbat, shorts, thumbnails, youtube
 
 settings = config.load()
+db.restore_seed(settings.db_path, config.ROOT / "seed" / "studio-seed.db.gz")
 db.init(settings.db_path)
 WEB = Path(__file__).resolve().parent.parent / "web"
-MODELS = str(settings.data_dir / "models")
+MODELS = str(settings.model_dir)
 COOKIE = "studio_session"
 
 

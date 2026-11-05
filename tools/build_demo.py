@@ -12,8 +12,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from studio import captions, config, db, glossary, pipeline, search, thumbnails  # noqa: E402
 
-DEMO_VIDEO = "tEenadgsY9k"
-
 
 def data_uri(image: bytes, width: int, quality: int = 62) -> str:
     picture = Image.open(io.BytesIO(image)).convert("RGB")
@@ -26,7 +24,6 @@ def data_uri(image: bytes, width: int, quality: int = 62) -> str:
 def main() -> None:
     settings = config.load()
     db.init(settings.db_path)
-    payload = json.loads((ROOT / "tools" / "demo_proposal.json").read_text(encoding="utf-8"))
     with db.connect() as c:
         rows = c.execute("SELECT v.* FROM videos v WHERE v.id IN (SELECT DISTINCT video_id FROM passages)").fetchall()
         videos = {}
@@ -39,39 +36,41 @@ def main() -> None:
         kinds = {r["kind"]: r["n"] for r in c.execute("SELECT kind, COUNT(*) n FROM videos GROUP BY kind")}
         next_up = [dict(r) for r in c.execute("SELECT id, title, views, duration, caption_status FROM videos WHERE "
                                               "kind!='short' ORDER BY views DESC LIMIT 20")]
-        video = dict(c.execute("SELECT * FROM videos WHERE id=?", (DEMO_VIDEO,)).fetchone())
 
-    for item in payload["chapters"]:
-        item["time"] = captions.timestamp(item["start"])
-    for item in payload["shorts"]:
-        item["time"] = captions.timestamp(item["start"])
-        item["url"] = search.video_url(DEMO_VIDEO, item["start"])
-
-    preview = thumbnails.make(DEMO_VIDEO, payload["thumbnail_text"])
-    proposal = {"id": 1, "video_id": DEMO_VIDEO, "kind": "live", "status": "pending", "payload": payload, "chosen": {},
-                "steps": {}, "url": f"https://youtu.be/{DEMO_VIDEO}", "current_title": video["title"],
-                "thumbnail": videos[DEMO_VIDEO]["thumb"], "views": video["views"], "duration": video["duration"],
-                "thumbnail_preview": data_uri(preview, 640, 72)}
-    sources = {}
-    for s in payload["sources"]:
-        sources.setdefault(s["book"], []).append({"ref": s["ref"], "label": s["label"], "moments": [{
-            "video_id": DEMO_VIDEO, "title": video["title"], "time": captions.timestamp(s["start"]),
-            "url": search.video_url(DEMO_VIDEO, s["start"])}]})
+    proposals, chapters, posts = [], {}, []
+    with db.connect() as c:
+        rows = c.execute("SELECT p.id, p.video_id, p.payload, v.title, v.views, v.duration FROM proposals p "
+                         "JOIN videos v ON v.id=p.video_id WHERE p.status='pending' "
+                         "ORDER BY v.published_at DESC, p.id").fetchall()
+    for row in rows:
+        data, video_id = json.loads(row["payload"]), row["video_id"]
+        for item in data["chapters"]:
+            item["time"] = captions.timestamp(item["start"])
+        for item in data["shorts"]:
+            item["time"] = captions.timestamp(item["start"])
+            item["url"] = search.video_url(video_id, item["start"])
+        preview = thumbnails.make(video_id, data["thumbnail_text"])
+        proposals.append({"id": row["id"], "video_id": video_id, "kind": "live", "status": "pending", "payload": data,
+                          "chosen": {}, "steps": {}, "url": f"https://youtu.be/{video_id}", "current_title": row["title"],
+                          "thumbnail": videos[video_id]["thumb"], "views": row["views"], "duration": row["duration"],
+                          "thumbnail_preview": data_uri(preview, 640, 72)})
+        chapters[video_id] = data["chapters"]
+        posts.append({"text": data["pensee"]["text"], "status": "queued",
+                      "url": search.video_url(video_id, data["pensee"]["start"])})
 
     demo = {
         "channel": settings.channel_name,
-        "banner": f"Démonstration : {len(videos)} vrais cours chargés sur {kinds.get('long', 0) + kinds.get('live', 0)}. "
-                  "Rien n'est publié. La recherche par le sens et les réponses rédigées demandent l'application complète.",
+        "banner": f"Démonstration : {len(videos)} vrais cours chargés sur {kinds.get('long', 0) + kinds.get('live', 0)}, dont "
+                  f"les {len(proposals)} derniers lives entièrement rédigés. Rien n'est publié. La recherche par le sens et "
+                  "les réponses rédigées demandent l'application complète.",
         "videos": videos, "passages": passages, "concepts": glossary.data()["concepts"], "stop": sorted(search.STOP),
-        "chapters": {DEMO_VIDEO: payload["chapters"]}, "proposals": [proposal],
-        "sources": [{"book": book, "refs": refs} for book, refs in sources.items()],
+        "chapters": chapters, "proposals": proposals, "sources": search.sources(),
         "archives": {"total": kinds.get("long", 0) + kinds.get("live", 0), "done": 0, "per_day": settings.archive_per_day,
                      "enabled": False, "next": next_up, "experiment": {"started_at": None, "days": 28, "groups": {}}},
-        "diffusion": {"posts": [{"text": payload["pensee"]["text"], "status": "queued",
-                                 "url": search.video_url(DEMO_VIDEO, payload["pensee"]["start"])}],
-                      "newsletter": f"{payload['titles'][0]}\n{payload['pensee']['text']}\nhttps://youtu.be/{DEMO_VIDEO}"},
+        "diffusion": {"posts": posts, "newsletter": "\n\n".join(
+            f"{p['payload']['titles'][0]}\n{p['payload']['pensee']['text']}\n{p['url']}" for p in proposals)},
         "status": {"keys": {"claude": False, "youtube": False, "telegram": False}, "videos": kinds,
-                   "transcripts": len(videos), "passages": len(passages), "proposals": {"pending": 1},
+                   "transcripts": len(videos), "passages": len(passages), "proposals": {"pending": len(proposals)},
                    "waiting_captions": [], "quota": {"spent": 0, "limit": settings.youtube_daily_quota}, "shabbat": False,
                    "events": []},
     }

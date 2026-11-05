@@ -94,7 +94,7 @@ def fetch_captions(settings: Settings, video_id: str, archive: bool = False) -> 
         ingest.store_transcript(video_id, api.download_caption(track["id"], archive), f"api:{track.get('trackKind')}")
         return True
     info = ytdlp_source.fetch(video_id)
-    fields = {k: info[k] for k in ("description", "tags", "published_at", "views", "duration")}
+    fields = {k: info[k] for k in ("title", "description", "tags", "published_at", "views", "duration")}
     if info["live_status"] in ("is_live", "is_upcoming"):
         return False
     if 0 < info["duration"] <= 180:
@@ -118,7 +118,12 @@ def check_captions(settings: Settings) -> None:
     for video in rows:
         if _age_hours(video["caption_checked_at"]) * 60 < settings.caption_check_minutes:
             continue
-        available = fetch_captions(settings, video["id"])
+        try:
+            available = fetch_captions(settings, video["id"])
+        except Exception as exc:
+            # Une vidéo en échec ne doit pas bloquer les suivantes ; elle sera retentée au prochain passage.
+            db.log(f"Sous-titres de {video['title']} : {str(exc)[:200]}", "warning")
+            available = False
         with db.connect() as c:
             c.execute("UPDATE videos SET caption_checked_at=? WHERE id=?", (db.now(), video["id"]))
         if available:
@@ -500,7 +505,7 @@ def tick(settings: Settings) -> None:
             traceback.print_exc()
     try:
         if embeddings.available():
-            embeddings.index_missing(str(settings.data_dir / "models"))
+            embeddings.index_missing(str(settings.model_dir))
     except Exception as exc:
         db.log(f"Index de recherche : {exc}", "error")
     db.set_setting("last_tick", db.now())

@@ -64,7 +64,9 @@ Ce que tu produis :
 - corrections : erreurs de transcription, avec le texte fautif exact tel qu'il apparaît et sa correction. Uniquement
   ce dont tu es sûr d'après le contexte. Pas de reformulation.
 - titles : 3 titres différents, moins de 70 caractères, qui donnent envie de regarder sans tromper sur le contenu,
-  avec le thème central dans les premiers mots. Pas de majuscules criardes.
+  avec le thème central dans les premiers mots. Pas de majuscules criardes. Si le titre actuel fait partie d'une série
+  (« TORAH N°14 - #3 », « DES FEUILLES POUR GUÉRIR #97 », « HAYE MOHARAN #68 », « lettre 99 »), garde ce repère dans
+  les 3 titres : dans ce cas, jusqu'à 100 caractères.
 - description : 2 ou 3 courts paragraphes, avec les mots que les gens cherchent. Sans les chapitres, ni liens, ni
   coordonnées : le bloc habituel de la chaîne est ajouté automatiquement en dessous.
 - chapters : 6 à 15 chapitres, start en secondes, le premier à 0, titres courts et concrets.
@@ -174,6 +176,10 @@ def normalize(payload: dict, duration: int) -> dict:
         tags.append(tag)
     payload["tags"] = tags
     payload["shorts"] = [s for s in payload["shorts"] if 0 <= s["start"] < s["end"] <= max(duration, 1)]
+    for source in payload["sources"]:
+        # « 14 » et « Torah 14 » doivent tomber sur la même entrée de l'index.
+        if source["book"] == "Likoutey Moharan" and source["ref"][:1].isdigit():
+            source["ref"] = f"Torah {source['ref']}"
     return payload
 
 

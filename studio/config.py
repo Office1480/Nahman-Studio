@@ -45,6 +45,10 @@ class Settings:
         return self.data_dir / "studio.db"
 
     @property
+    def model_dir(self) -> Path:
+        return Path(os.environ.get("MODEL_DIR", self.data_dir / "models"))
+
+    @property
     def has_claude(self) -> bool:
         return bool(self.anthropic_api_key)
 

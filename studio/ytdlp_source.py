@@ -11,8 +11,9 @@ from pathlib import Path
 
 
 def _run(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, "-m", "yt_dlp", "--no-warnings", *args], capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    # lang=fr : sinon YouTube renvoie parfois les titres traduits en anglais.
+    return subprocess.run([sys.executable, "-m", "yt_dlp", "--no-warnings", "--extractor-args", "youtube:lang=fr", *args],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
 def inventory(channel_id: str) -> list[dict]:
@@ -26,6 +27,19 @@ def inventory(channel_id: str) -> list[dict]:
                            "duration": int(entry.get("duration") or 0), "views": entry.get("view_count") or 0,
                            "thumbnail": f"https://i.ytimg.com/vi/{entry['id']}/hqdefault.jpg"})
     return videos
+
+
+def latest_lives(channel_id: str, count: int) -> list[dict]:
+    """Les derniers lives terminés, du plus récent au plus ancien."""
+    result = _run(["--flat-playlist", "-J", "--playlist-end", str(count + 5),
+                   f"https://www.youtube.com/channel/{channel_id}/streams"], timeout=120)
+    if result.returncode:
+        raise RuntimeError(result.stderr[-500:])
+    entries = [e for e in json.loads(result.stdout).get("entries", [])
+               if e.get("live_status") not in ("is_live", "is_upcoming")]
+    return [{"id": e["id"], "title": e.get("title") or "", "kind": "live", "duration": int(e.get("duration") or 0),
+             "views": e.get("view_count") or 0, "thumbnail": f"https://i.ytimg.com/vi/{e['id']}/hqdefault.jpg"}
+            for e in entries[:count]]
 
 
 def fetch(video_id: str) -> dict | None:

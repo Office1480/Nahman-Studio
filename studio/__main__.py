@@ -38,6 +38,24 @@ def import_subs(settings, limit: int, pause: float) -> None:
         time.sleep(pause)
 
 
+def latest_lives(settings, count: int) -> None:
+    """Fait passer les derniers lives dans le circuit normal : sous-titres, puis proposition."""
+    lives = ytdlp_source.latest_lives(settings.channel_id, count)
+    for position, live in enumerate(lives, 1):
+        ingest.upsert_video(live)
+        with db.connect() as c:
+            c.execute("UPDATE videos SET is_archive=0 WHERE id=?", (live["id"],))
+            status = c.execute("SELECT caption_status FROM videos WHERE id=?", (live["id"],)).fetchone()[0]
+        available = status == "fetched" or pipeline.fetch_captions(settings, live["id"])
+        with db.connect() as c:
+            title = c.execute("SELECT title FROM videos WHERE id=?", (live["id"],)).fetchone()[0]
+            passages = c.execute("SELECT COUNT(*) FROM passages WHERE video_id=?", (live["id"],)).fetchone()[0]
+        print(f"{position}/{len(lives)} {live['id']} {passages} passages {'' if available else 'SANS SOUS-TITRES '}{title}",
+              flush=True)
+        time.sleep(3)
+    pipeline.run_ai(settings)
+
+
 def auth_youtube(settings) -> None:
     """Autorise l'application sur la chaîne et affiche le jeton à mettre dans .env."""
     port = 8765
@@ -80,6 +98,8 @@ def main() -> None:
     subs = commands.add_parser("import-subs")
     subs.add_argument("--limit", type=int, default=2000)
     subs.add_argument("--pause", type=float, default=5)
+    lives = commands.add_parser("latest-lives")
+    lives.add_argument("--count", type=int, default=10)
     commands.add_parser("auth-youtube")
     commands.add_parser("tick")
     commands.add_parser("reindex")
@@ -94,6 +114,8 @@ def main() -> None:
         import_channel(settings)
     elif args.command == "import-subs":
         import_subs(settings, args.limit, args.pause)
+    elif args.command == "latest-lives":
+        latest_lives(settings, args.count)
     elif args.command == "auth-youtube":
         auth_youtube(settings)
     elif args.command == "tick":
@@ -101,7 +123,7 @@ def main() -> None:
     elif args.command == "reindex":
         ingest.refresh_all()
         total = 0
-        while count := embeddings.index_missing(str(settings.data_dir / "models")):
+        while count := embeddings.index_missing(str(settings.model_dir)):
             total += count
             print(total, flush=True)
 
