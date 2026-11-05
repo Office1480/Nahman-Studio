@@ -6,8 +6,8 @@ services:
       context: ..
     restart: unless-stopped
     env_file: ../.env
-    mem_limit: 1500m
-    cpus: 1.5
+    mem_limit: 1200m
+    cpus: 1.0
     volumes:
       - studio-data:/data
     networks:
