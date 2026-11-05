@@ -10,7 +10,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from studio import captions, config, db, glossary, pipeline, search, thumbnails  # noqa: E402
+from studio import captions, clips, config, db, glossary, search, thumbnails  # noqa: E402
 
 
 def data_uri(image: bytes, width: int, quality: int = 62) -> str:
@@ -37,6 +37,7 @@ def main() -> None:
         next_up = [dict(r) for r in c.execute("SELECT id, title, views, duration, caption_status FROM videos WHERE "
                                               "kind!='short' ORDER BY views DESC LIMIT 20")]
 
+    found = clips.listing(status="", limit=5000)
     proposals, chapters, posts = [], {}, []
     with db.connect() as c:
         rows = c.execute("SELECT p.id, p.video_id, p.payload, v.title, v.views, v.duration FROM proposals p "
@@ -65,6 +66,8 @@ def main() -> None:
                   "les réponses rédigées demandent l'application complète.",
         "videos": videos, "passages": passages, "concepts": glossary.data()["concepts"], "stop": sorted(search.STOP),
         "chapters": chapters, "proposals": proposals, "sources": search.sources(),
+        "clips": [{**c, "thumbnail": videos[c["video_id"]]["thumb"]} for c in found["clips"]],
+        "clip_lessons": found["lessons"],
         "archives": {"total": kinds.get("long", 0) + kinds.get("live", 0), "done": 0, "per_day": settings.archive_per_day,
                      "enabled": False, "next": next_up, "experiment": {"started_at": None, "days": 28, "groups": {}}},
         "diffusion": {"posts": posts, "newsletter": "\n\n".join(

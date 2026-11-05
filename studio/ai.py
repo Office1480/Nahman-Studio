@@ -43,6 +43,77 @@ ANSWER_SCHEMA = _obj(found={"type": "boolean"},
                      paragraphs=_list(text=_text, citations={"type": "array", "items": _int}))
 
 
+_clip = {"start": _int, "end": _int, "title": _text, "summary": _text, "hook": _text}
+CLIP_SCHEMA = _obj(stories=_list(**_clip), moments=_list(**_clip), shorts=_list(**_clip))
+
+
+def clip_prompt(settings: Settings) -> str:
+    return f"""Tu assistes la chaîne YouTube « {settings.channel_name} » : des cours de Torah en français, avec des termes
+hébreux, sur l'enseignement de Rabbi Nahman de Breslev.
+
+Tu reçois le transcript d'un cours, issu des sous-titres automatiques de YouTube. Il contient des erreurs. Chaque ligne
+commence par son horodatage en secondes. Repère les passages qui peuvent devenir des vidéos à part entière.
+
+Règles absolues :
+- start et end sont des horodatages du transcript. start tombe sur le début de la phrase, end sur la fin de la phrase.
+- Le passage doit se comprendre sans le reste du cours : pas de début au milieu d'une explication.
+- Le titre et le résumé ne disent que ce qui est dit dans le passage. N'invente rien, n'attribue rien qui ne soit pas dit.
+- Ignore les échanges sans intérêt avec le public et les passages inaudibles.
+
+Trois listes :
+- stories : TOUTES les histoires racontées, sans exception et même courtes (30 secondes au moins) : histoires de Tsadikim,
+  contes de Rabbi Nahman, récits de la Torah ou du Midrach développés, anecdotes personnelles, paraboles. De la phrase
+  qui l'annonce jusqu'à sa fin, leçon comprise si elle suit directement. Si aucune histoire n'est racontée, liste vide.
+- moments : les 2 à 6 enseignements les plus forts, de 1 à 8 minutes, qui forment un tout : une idée, son explication
+  et sa conclusion.
+- shorts : 3 à 8 passages de 20 à 90 secondes, très forts dès la première phrase : une formule marquante, une chute,
+  une émotion. Pas de contexte nécessaire.
+
+Pour chacun :
+- title : moins de 70 caractères, précis, qui donne envie sans tromper. Pour une histoire, dis de quoi elle parle.
+- summary : 1 ou 2 phrases, pour la description YouTube.
+- hook : la phrase d'accroche affichée en haut de la vidéo, moins de 60 caractères, au plus près des mots de l'orateur."""
+
+
+def fine_transcript(cues: list[dict], step: float = 10) -> str:
+    """Transcript horodaté toutes les 10 secondes environ, assez fin pour bien placer les coupes."""
+    lines, current, mark = [], [], None
+    for cue in cues:
+        if mark is None:
+            mark = cue["start"]
+        current.append(cue["text"])
+        if cue["end"] - mark >= step:
+            lines.append(f"[{int(mark)}] {' '.join(current)}")
+            current, mark = [], None
+    if current:
+        lines.append(f"[{int(mark)}] {' '.join(current)}")
+    return "\n".join(lines)
+
+
+def clip_message(video: dict, cues: list[dict]) -> str:
+    return (f"Cours : {video['title']}\nDurée : {video['duration']} secondes\n\nTranscript :\n{fine_transcript(cues)}")
+
+
+def _clip_params(settings: Settings, video: dict, cues: list[dict]) -> dict:
+    return {"model": settings.claude_model, "max_tokens": 16000, "system": clip_prompt(settings),
+            "output_config": {"effort": "medium", "format": {"type": "json_schema", "schema": CLIP_SCHEMA}},
+            "messages": [{"role": "user", "content": clip_message(video, cues)}]}
+
+
+def detect_clips(settings: Settings, video: dict, cues: list[dict], api=None) -> dict:
+    api = api or client(settings)
+    with api.beta.messages.stream(betas=[BETA], fallbacks="default", **_clip_params(settings, video, cues)) as stream:
+        return _parse(stream.get_final_message())
+
+
+def submit_clip_batch(settings: Settings, items: list[tuple[dict, list[dict]]], api=None) -> str:
+    """Détection groupée sur les archives, à moitié prix. items = [(video, cues)]."""
+    api = api or client(settings)
+    batch = api.messages.batches.create(requests=[
+        {"custom_id": video["id"], "params": _clip_params(settings, video, cues)} for video, cues in items])
+    return batch.id
+
+
 def system_prompt(settings: Settings) -> str:
     g = glossary.data()
     concepts = "\n".join(f"- {c['id']} : {c['label']} ({c['hebrew']}) ; aussi : {', '.join(c['variants'][:6])}"

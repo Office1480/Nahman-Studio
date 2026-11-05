@@ -17,6 +17,7 @@ recherche à la minute près dans tous les cours.
 | Archives | Lots quotidiens à moitié prix (Batch API), les plus vues d'abord, avec groupe témoin pendant 4 semaines |
 | Recherche | Mots exacts, orthographes approchées, concepts du glossaire et sens (vecteurs locaux, sans clé) |
 | Questions | Réponse de Claude à partir des extraits uniquement, avec le lien vers chaque passage |
+| Extraits | Toutes les histoires, les Shorts et les moments clés de chaque cours, sur une seule page : tu regardes, tu ajustes, tu valides, l'appli extrait et publie |
 | Diffusion | Page publique par cours, pensée quotidienne sur Telegram, brouillon de newsletter |
 | Analyse | Recherches sans résultat, sujets les plus demandés, vidéos les plus vues |
 
@@ -72,6 +73,7 @@ Chaque clé active une partie de l'application, et l'état de chacune est visibl
 | Envoyer des sous-titres corrigés | 400 |
 | Mettre à jour titre, description et tags | 50 |
 | Remplacer la miniature | 50 |
+| Publier un extrait | 1 600 |
 
 Une archive déjà transcrite coûte environ 450 unités, soit 17 vidéos par jour (`ARCHIVE_PER_DAY`). Si une publication
 s'arrête faute de quota, elle reprend le lendemain sans refaire ce qui est déjà fait.
@@ -105,8 +107,12 @@ Pour rafraîchir les données embarquées : `python tools/export_seed.py`.
   connues, et il suffit de l'enrichir puis de lancer `python run.py reindex`.
 - Les écrans de fin et les fiches n'ont pas d'API : ils restent manuels.
 - L'API Analytics ne donne pas le taux de clic des miniatures. Les archives sont donc classées par nombre de vues.
-- La fabrication d'un Short télécharge la vidéo : elle fonctionne depuis une connexion domestique, pas depuis un serveur.
-- Publier un Short reste manuel après fabrication. `YouTube.upload_short` l'envoie en privé mais n'est pas relié à l'écran.
+- Extraire un passage passe par yt-dlp, un outil non officiel : YouTube lui oppose par moments une vérification
+  anti-robots, y compris depuis une connexion domestique, et bloque souvent les serveurs. L'application ne la contourne
+  pas : l'extrait passe en échec avec un bouton pour réessayer. La voie sûre est de déposer le fichier du cours,
+  téléchargé depuis YouTube Studio, dans `data/sources/ID_VIDEO.mp4` : il est alors utilisé en priorité.
+- Avec le quota gratuit, au plus 5 extraits publiés par jour, en concurrence avec la réoptimisation des archives.
+  Le reste attend le lendemain, sans rien perdre.
 
 ## Tests et outils
 

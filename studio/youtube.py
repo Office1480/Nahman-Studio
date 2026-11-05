@@ -1,5 +1,6 @@
 """API YouTube (Data v3 + Analytics) avec suivi du quota quotidien."""
 import json
+import os
 import re
 import uuid
 from datetime import date, datetime, timedelta
@@ -159,15 +160,21 @@ class YouTube:
                    params={"videoId": video_id, "uploadType": "media"}, content=png,
                    headers={"Content-Type": "image/png"})
 
-    def upload_short(self, path: str, title: str, description: str, tags: list[str]) -> str:
-        """Envoie un Short en privé : il reste à le publier depuis YouTube Studio."""
+    def upload_video(self, path: str, title: str, description: str, tags: list[str]) -> str:
+        """Publie une vidéo, en envoi par morceaux pour ne pas charger le fichier en mémoire."""
+        size = os.path.getsize(path)
         metadata = {"snippet": {"title": title[:100], "description": description, "tags": tags, "categoryId": "27",
                                 "defaultLanguage": "fr"},
-                    "status": {"privacyStatus": "private", "selfDeclaredMadeForKids": False}}
+                    "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}
+        session = self._call("POST", f"{UPLOAD}/videos", "videos_insert", True,
+                             params={"part": "snippet,status", "uploadType": "resumable"}, json=metadata,
+                             headers={"X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": str(size)})
         with open(path, "rb") as handle:
-            body, content_type = _multipart(metadata, handle.read(), "video/mp4")
-        response = self._call("POST", f"{UPLOAD}/videos", "videos_insert", params={
-            "part": "snippet,status", "uploadType": "multipart"}, content=body, headers={"Content-Type": content_type})
+            response = self.http.put(session.headers["Location"], content=handle, timeout=3600, headers={
+                "Authorization": f"Bearer {self._access_token()}", "Content-Type": "video/mp4",
+                "Content-Length": str(size)})
+        if response.status_code >= 400:
+            raise YouTubeError(f"Envoi de la vidéo : {response.status_code} {response.text[:300]}")
         return response.json()["id"]
 
     def top_videos(self, days: int = 90, limit: int = 200) -> list[dict]:

@@ -38,7 +38,7 @@ function toast(message) {
 }
 
 const PUBLIC_TABS = [["recherche", "Recherche"], ["question", "Poser une question"], ["sources", "Sources"]];
-const ADMIN_TABS = [["valider", "À valider"], ["archives", "Archives"], ["diffusion", "Diffusion"], ["analyse", "Analyse"], ["etat", "État"]];
+const ADMIN_TABS = [["valider", "À valider"], ["extraits", "Extraits"], ["archives", "Archives"], ["diffusion", "Diffusion"], ["analyse", "Analyse"], ["etat", "État"]];
 
 function renderNav(active) {
   const tabs = me.admin ? [...PUBLIC_TABS, ...ADMIN_TABS] : PUBLIC_TABS;
@@ -172,8 +172,7 @@ function proposalCard(p) {
   const translations = Object.entries(d.translations).map(([lang, t]) => `<p dir="${lang === "he" ? "rtl" : "ltr"}"><span class="tag">${esc(lang)}</span> <strong>${esc(t.title)}</strong><br>${esc(t.description)}</p>`).join("");
   const shorts = d.shorts.map((s, i) => `
     <div class="short-line"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.time)}</a> <strong>${esc(s.title)}</strong>
-    <span class="muted small">${s.end - s.start} s</span><br><span class="small">${esc(s.hook)}</span>
-    ${me.demo ? "" : `<br><button type="button" class="link" data-short="${i}">Fabriquer ce Short</button>`}</div>`).join("");
+    <span class="muted small">${s.end - s.start} s</span><br><span class="small">${esc(s.hook)}</span></div>`).join("");
   const sources = d.sources.map((s) => `<p class="small">${esc(clock(s.start))} · <strong>${esc(s.book)}</strong> ${esc(s.ref)} ${esc(s.label)}</p>`).join("") || `<p class="small muted">Aucune source citée explicitement.</p>`;
   const corrections = d.corrections.map((c) => `<span class="tag">${esc(c.wrong)} → ${esc(c.right)}</span>`).join(" ") || `<span class="small muted">Aucune.</span>`;
   const preview = p.thumbnail_preview || `/api/thumbnail/${encodeURIComponent(p.video_id)}?text=${encodeURIComponent(d.thumbnail_text)}`;
@@ -201,7 +200,7 @@ function proposalCard(p) {
       <img class="thumb-preview" src="${esc(preview)}" alt="Aperçu de la miniature" loading="lazy">
     </div></details>
     <details><summary>Article pour le site</summary><div class="article-body"><h2>${esc(d.article.title)}</h2>${markdown(d.article.body)}</div></details>
-    <details><summary>Shorts proposés (${d.shorts.length})</summary><div>${shorts}</div></details>
+    <details><summary>Shorts proposés (${d.shorts.length})</summary><div>${shorts}<p class="small"><a href="#extraits">Les regarder et les publier dans Extraits</a></p></div></details>
     <details><summary>Pensée du jour</summary><div><p>${esc(d.pensee.text)}</p><a class="small" href="https://youtu.be/${esc(p.video_id)}?t=${d.pensee.start}" target="_blank" rel="noopener">À ${esc(clock(d.pensee.start))}</a></div></details>
     <details><summary>Traductions</summary><div>${translations}</div></details>
     <details><summary>Sources détectées et corrections</summary><div>${sources}<p>${corrections}</p></div></details>
@@ -246,7 +245,6 @@ function bindProposals(list, reload) {
       const button = event.target.closest("button");
       if (!button) return;
       const action = button.dataset.action;
-      if (button.dataset.short !== undefined) return makeShort(button, p, p.payload.shorts[Number(button.dataset.short)]);
       if (!action) return;
       if (action === "ask-note") {
         $(".note-box", card).hidden = false;
@@ -275,17 +273,154 @@ function bindProposals(list, reload) {
   });
 }
 
-async function makeShort(button, p, short) {
-  button.disabled = true;
-  button.textContent = "Fabrication en cours, quelques minutes…";
-  try {
-    const result = await api("/api/shorts", { video_id: p.video_id, start: short.start, end: short.end, title: short.title, hook: short.hook });
-    button.outerHTML = `<a href="${esc(result.file)}" target="_blank" rel="noopener">Voir le Short</a>`;
-  } catch (error) {
-    button.disabled = false;
-    button.textContent = "Fabriquer ce Short";
-    toast(error.message);
-  }
+/* Extraits */
+
+const CLIP_KINDS = { "": "Tout", histoire: "Histoires", short: "Shorts", moment: "Moments clés" };
+const CLIP_LABEL = { histoire: "Histoire", short: "Short", moment: "Moment clé" };
+const CLIP_STATES = { proposed: "À voir", active: "En cours", posted: "Publiés", rejected: "Écartés" };
+const CLIP_STATUS = {
+  proposed: ["À voir", ""], validated: ["En file", "warn"], rendering: ["Extraction en cours", "warn"],
+  rendered: ["Extrait, en attente d'envoi", "warn"], uploading: ["Envoi sur YouTube", "warn"], posted: ["Publié", "ok"],
+  rejected: ["Écarté", ""], failed: ["Échec", "bad"],
+};
+const clipFilter = { kind: "", status: "proposed", q: "" };
+const clipPicked = new Set();
+
+function clipRow(c) {
+  const [label, tone] = CLIP_STATUS[c.status];
+  const pickable = c.status === "proposed";
+  return `<article class="card clip" data-clip="${c.id}">
+    <div class="clip-head">
+      ${pickable ? `<input type="checkbox" class="clip-pick" aria-label="Sélectionner ${esc(c.title)}" ${clipPicked.has(c.id) ? "checked" : ""}>` : ""}
+      <img src="${esc(c.thumbnail)}" alt="" loading="lazy">
+      <div class="clip-text">
+        <h2>${esc(c.title)}</h2>
+        <p class="small muted">${esc(c.lesson)}</p>
+        <span class="tag kind-${esc(c.kind)}">${esc(CLIP_LABEL[c.kind])}</span>
+        <span class="tag">${esc(clock(c.length))}</span>
+        <span class="tag">à ${esc(c.time)}</span>
+        ${c.status !== "proposed" ? `<span class="tag ${tone}">${esc(label)}</span>` : ""}
+      </div>
+      <button type="button" data-clip-action="open" aria-expanded="false">Voir</button>
+    </div>
+    <div class="clip-detail" hidden></div>
+  </article>`;
+}
+
+async function openClip(card, c) {
+  const box = $(".clip-detail", card);
+  const button = $('[data-clip-action="open"]', card);
+  const wasOpen = !box.hidden;
+  $$(".clip-detail", view).forEach((other) => { other.hidden = true; other.innerHTML = ""; });
+  $$('[data-clip-action="open"]', view).forEach((other) => { other.textContent = "Voir"; other.setAttribute("aria-expanded", "false"); });
+  if (wasOpen) return;
+  button.textContent = "Fermer";
+  button.setAttribute("aria-expanded", "true");
+  box.hidden = false;
+  box.innerHTML = `<p class="muted">Chargement…</p>`;
+  const { text } = await api(`/api/clips/${c.id}/text`);
+  const editable = c.status === "proposed" || c.status === "failed";
+  const player = (start, end) => me.demo
+    ? `<a class="button" href="https://youtu.be/${esc(c.video_id)}?t=${Math.floor(start)}" target="_blank" rel="noopener">Regarder ce passage sur YouTube</a>`
+    : `<div class="player"><iframe src="https://www.youtube-nocookie.com/embed/${esc(c.video_id)}?start=${Math.floor(start)}&end=${Math.ceil(end)}&autoplay=1&rel=0" title="Aperçu de l'extrait" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>`;
+  box.innerHTML = `
+    <div class="clip-player">${player(c.start, c.end)}</div>
+    ${c.has_file ? `<p><a href="/api/clips/${c.id}/file" target="_blank" rel="noopener">Voir la vidéo extraite</a></p>` : ""}
+    ${c.posted_url ? `<p><a href="${esc(c.posted_url)}" target="_blank" rel="noopener">Voir la vidéo publiée</a></p>` : ""}
+    ${c.error ? `<p class="small bad-text">${esc(c.error)}</p>` : ""}
+    ${editable ? `
+      <div class="clip-times">
+        <label class="field"><span>Début</span><span class="stepper"><button type="button" data-shift="start:-5" aria-label="Reculer le début de 5 secondes">−5 s</button><input type="text" data-field="start" value="${esc(clock(c.start))}" inputmode="numeric"><button type="button" data-shift="start:5" aria-label="Avancer le début de 5 secondes">+5 s</button></span></label>
+        <label class="field"><span>Fin</span><span class="stepper"><button type="button" data-shift="end:-5" aria-label="Reculer la fin de 5 secondes">−5 s</button><input type="text" data-field="end" value="${esc(clock(c.end))}" inputmode="numeric"><button type="button" data-shift="end:5" aria-label="Avancer la fin de 5 secondes">+5 s</button></span></label>
+      </div>
+      <button type="button" data-clip-action="replay">${me.demo ? "Mettre à jour le lien" : "Revoir avec ces temps"}</button>
+      <label class="field clip-gap"><span>Titre sur YouTube</span><input type="text" data-field="title" maxlength="100" value="${esc(c.title)}"></label>
+      <label class="field"><span>Description</span><textarea data-field="summary" rows="3">${esc(c.summary)}</textarea></label>
+      <label class="field"><span>Phrase d'accroche</span><input type="text" data-field="hook" value="${esc(c.hook)}"></label>
+      <fieldset class="clip-format"><legend>Format</legend>
+        <label><input type="radio" name="format-${c.id}" value="vertical" ${c.format === "vertical" ? "checked" : ""}> Short (3 min au plus)</label>
+        <label><input type="radio" name="format-${c.id}" value="horizontal" ${c.format === "horizontal" ? "checked" : ""}> Vidéo classique</label>
+      </fieldset>` : `<p class="small">${esc(c.summary)}</p>`}
+    <details><summary>Lire le passage</summary><div class="small">${esc(text)}</div></details>
+    <div class="actions">
+      ${editable ? `<button class="primary" type="button" data-clip-action="validate">Valider, extraire et publier</button><button class="danger" type="button" data-clip-action="reject">Écarter</button>` : ""}
+      ${c.status === "rejected" ? `<button type="button" data-clip-action="reopen">Remettre dans À voir</button>` : ""}
+    </div>`;
+  const playerBox = $(".clip-player", box);
+  const times = () => ({ start: toSeconds($('[data-field="start"]', box).value), end: toSeconds($('[data-field="end"]', box).value) });
+  $$("[data-shift]", box).forEach((step) => step.addEventListener("click", () => {
+    const [name, amount] = step.dataset.shift.split(":");
+    const field = $(`[data-field="${name}"]`, box);
+    field.value = clock(Math.max(0, toSeconds(field.value) + Number(amount)));
+  }));
+  box.onclick = async (event) => {
+    const action = event.target.closest("[data-clip-action]")?.dataset.clipAction;
+    if (action === "replay") { const t = times(); playerBox.innerHTML = player(t.start, t.end); return; }
+    if (!action || action === "open") return;
+    event.target.disabled = true;
+    try {
+      if (action === "validate") {
+        const { start, end } = times();
+        await api(`/api/clips/${c.id}/validate`, { fields: {
+          start, end, title: $('[data-field="title"]', box).value, summary: $('[data-field="summary"]', box).value,
+          hook: $('[data-field="hook"]', box).value, format: $(`input[name="format-${c.id}"]:checked`, box).value,
+        } });
+        toast(me.demo ? "Démonstration : rien n'est publié." : "Validé. L'extraction commence.");
+      } else {
+        await api(`/api/clips/${c.id}/${action}`, {});
+        toast(action === "reject" ? "Extrait écarté." : "Extrait remis dans À voir.");
+      }
+      clipPicked.delete(c.id);
+      viewClips();
+    } catch (error) {
+      event.target.disabled = false;
+      toast(error.message);
+    }
+  };
+}
+
+async function viewClips() {
+  const { kind, status, q } = clipFilter;
+  const data = await api(`/api/clips?kind=${encodeURIComponent(kind)}&status=${status}&q=${encodeURIComponent(q)}`);
+  const states = data.states;
+  const running = ["validated", "rendering", "rendered", "uploading", "failed"].reduce((n, s) => n + (states[s] || 0), 0);
+  const counts = { proposed: states.proposed || 0, active: running, posted: states.posted || 0, rejected: states.rejected || 0 };
+  const kindCount = (id) => id ? (data.kinds[id] || 0) : Object.values(data.kinds).reduce((a, b) => a + b, 0);
+  view.innerHTML = `
+    <h1>Extraits</h1>
+    <p class="muted">Histoires, Shorts et moments clés repérés dans ${data.lessons} cours. Regarde, ajuste, valide : l'extraction et la publication suivent toutes seules, jamais pendant Chabbat.</p>
+    ${data.can_post || me.demo ? "" : `<p class="summary">La chaîne YouTube n'est pas encore connectée : les extraits validés seront fabriqués, puis publiés dès qu'elle le sera.</p>`}
+    <div class="chips" role="group" aria-label="État">${Object.entries(CLIP_STATES).map(([id, label]) => `<button type="button" class="chip ${status === id ? "chip-on" : ""}" data-state="${id}" aria-pressed="${status === id}">${esc(label)} · ${counts[id]}</button>`).join("")}</div>
+    <div class="chips" role="group" aria-label="Sorte d'extrait">${Object.entries(CLIP_KINDS).map(([id, label]) => `<button type="button" class="chip ${kind === id ? "chip-on" : ""}" data-kind="${id}" aria-pressed="${kind === id}">${esc(label)}${status === "proposed" ? ` · ${kindCount(id)}` : ""}</button>`).join("")}</div>
+    <form class="searchbar" id="clip-search"><input type="search" id="clip-q" placeholder="Chercher dans les titres, par exemple : Baal Chem Tov" aria-label="Chercher un extrait" value="${esc(q)}"><button type="submit">Chercher</button></form>
+    <div id="clip-bulk" class="bulk" hidden><span id="clip-bulk-count"></span><button class="primary" type="button" id="clip-bulk-go">Valider la sélection</button></div>
+    ${data.clips.length ? data.clips.map(clipRow).join("") : `<p class="empty">Aucun extrait ici pour l'instant.</p>`}
+    ${data.total > data.clips.length ? `<p class="small muted">${data.clips.length} affichés sur ${data.total}. Filtre ou cherche pour affiner.</p>` : ""}
+    ${me.demo ? "" : `<label class="toggle"><input type="checkbox" id="clips-all" ${data.all_enabled ? "checked" : ""}><span>Chercher aussi dans toutes les archives transcrites<br><span class="small muted">Par lots de 100 cours, à moitié prix.${data.can_detect ? "" : " Demande la clé Claude."}</span></span></label>`}`;
+
+  const refresh = () => { $("#clip-bulk").hidden = !clipPicked.size; $("#clip-bulk-count").textContent = `${clipPicked.size} sélectionné${clipPicked.size > 1 ? "s" : ""}`; };
+  $$("[data-state]", view).forEach((b) => b.addEventListener("click", () => { clipFilter.status = b.dataset.state; viewClips(); }));
+  $$("[data-kind]", view).forEach((b) => b.addEventListener("click", () => { clipFilter.kind = b.dataset.kind; viewClips(); }));
+  $("#clip-search").addEventListener("submit", (event) => { event.preventDefault(); clipFilter.q = $("#clip-q").value.trim(); viewClips(); });
+  $$("[data-clip]", view).forEach((card) => {
+    const c = data.clips.find((x) => String(x.id) === card.dataset.clip);
+    $('[data-clip-action="open"]', card).addEventListener("click", () => openClip(card, c));
+    $(".clip-pick", card)?.addEventListener("change", (event) => {
+      if (event.target.checked) clipPicked.add(c.id); else clipPicked.delete(c.id);
+      refresh();
+    });
+  });
+  $("#clip-bulk-go").addEventListener("click", async () => {
+    await api("/api/clips/validate-many", { ids: [...clipPicked] });
+    toast(me.demo ? "Démonstration : rien n'est publié." : "Sélection validée. L'extraction commence.");
+    clipPicked.clear();
+    viewClips();
+  });
+  $("#clips-all")?.addEventListener("change", async (event) => {
+    await api("/api/settings", { values: { clips_all_enabled: event.target.checked } });
+    toast("Réglage enregistré.");
+  });
+  refresh();
 }
 
 async function viewValidate() {
@@ -431,6 +566,7 @@ async function route() {
     else if (name === "sources") await viewSources();
     else if (!me.admin) showLogin();
     else if (name === "valider") await viewValidate();
+    else if (name === "extraits") await viewClips();
     else if (name === "archives") await viewArchives();
     else if (name === "diffusion") await viewDiffusion();
     else if (name === "analyse") await viewInsights();

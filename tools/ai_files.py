@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from studio import ai, config, db, ingest, pipeline  # noqa: E402
+from studio import ai, clips, config, db, ingest, pipeline  # noqa: E402
 
 settings = config.load()
 db.init(settings.db_path)
@@ -96,12 +96,77 @@ def import_all() -> None:
         print("proposition", pipeline.create_proposal(settings, video_id, payload), video_id)
 
 
+CLIPS = FOLDER / "clips"
+
+
+def clip_videos() -> list[str]:
+    with db.connect() as c:
+        return [r["id"] for r in c.execute("SELECT id FROM videos WHERE is_archive=0 AND caption_status='fetched' "
+                                           "AND kind!='short' AND clips_status='todo'")]
+
+
+def export_clips() -> None:
+    CLIPS.mkdir(parents=True, exist_ok=True)
+    (CLIPS / "system.txt").write_text(ai.clip_prompt(settings), encoding="utf-8")
+    (CLIPS / "schema.json").write_text(json.dumps(ai.CLIP_SCHEMA, ensure_ascii=False, indent=1), encoding="utf-8")
+    for video_id in clip_videos():
+        video = pipeline._video(video_id)
+        (CLIPS / f"{video_id}.txt").write_text(ai.clip_message(video, ingest.video_cues(video_id)), encoding="utf-8")
+        print(video_id, video["title"])
+
+
+def check_clips(video_id: str) -> list[str]:
+    try:
+        payload = json.loads((CLIPS / f"{video_id}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"lecture impossible : {exc}"]
+    errors = validate(payload, ai.CLIP_SCHEMA)
+    if errors:
+        return errors
+    duration = pipeline._video(video_id)["duration"]
+    for key, low, high in (("stories", 25, 1800), ("moments", 45, 600), ("shorts", 15, 120)):
+        for item in payload[key]:
+            length = item["end"] - item["start"]
+            if not low <= length <= high or item["end"] > duration:
+                errors.append(f"{key} de {length} s à {item['start']} : {item['title']}")
+            if len(item["title"]) > 100:
+                errors.append(f"titre trop long : {item['title']}")
+    if not 2 <= len(payload["moments"]) <= 6:
+        errors.append("il faut 2 à 6 moments")
+    if not 3 <= len(payload["shorts"]) <= 8:
+        errors.append("il faut 3 à 8 Shorts")
+    return errors
+
+
+def import_clips() -> None:
+    with db.connect() as c:
+        rows = c.execute("SELECT p.video_id, p.payload, v.duration FROM proposals p JOIN videos v ON v.id=p.video_id "
+                         "WHERE p.status='pending'").fetchall()
+    for row in rows:
+        clips.add(row["video_id"], "short", json.loads(row["payload"])["shorts"], row["duration"])
+    for video_id in clip_videos():
+        errors = check_clips(video_id)
+        if errors:
+            print("refusé", video_id, errors[:3])
+            continue
+        payload = json.loads((CLIPS / f"{video_id}.json").read_text(encoding="utf-8"))
+        print(clips.store_detection(video_id, payload, pipeline._video(video_id)["duration"]), "extraits", video_id)
+
+
 if __name__ == "__main__":
     command = sys.argv[1]
     if command == "export":
         export()
     elif command == "import":
         import_all()
+    elif command == "export-clips":
+        export_clips()
+    elif command == "import-clips":
+        import_clips()
+    elif command == "check-clips":
+        problems = check_clips(sys.argv[2])
+        print("\n".join(problems) if problems else "OK")
+        sys.exit(1 if problems else 0)
     else:
         problems = check(sys.argv[2])
         print("\n".join(problems) if problems else "OK")

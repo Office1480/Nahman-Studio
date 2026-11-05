@@ -12,7 +12,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import ai, captions, config, db, embeddings, ingest, pipeline, search, shabbat, shorts, thumbnails, youtube
+from . import ai, captions, clips, config, db, ingest, pipeline, search, shabbat, thumbnails, youtube
 
 settings = config.load()
 db.restore_seed(settings.db_path, config.ROOT / "seed" / "studio-seed.db.gz")
@@ -248,22 +248,61 @@ def thumbnail(video_id: str, text: str):
     return Response(thumbnails.make(video_id, text[:60]), media_type="image/png")
 
 
-@app.post("/api/shorts", dependencies=[Depends(admin)])
-def make_short(video_id: str = Body(), start: int = Body(), end: int = Body(), title: str = Body(), hook: str = Body("")):
-    out = settings.data_dir / "shorts"
+def _start_processing() -> None:
+    threading.Thread(target=clips.process, args=(settings,), daemon=True).start()
+
+
+@app.get("/api/clips", dependencies=[Depends(admin)])
+def clip_list(kind: str = "", status: str = "proposed", q: str = "", offset: int = 0):
+    return {**clips.listing(kind, status, q.strip(), offset=offset), "all_enabled": db.get_setting("clips_all_enabled", False),
+            "can_post": settings.has_youtube, "can_detect": settings.has_claude}
+
+
+@app.get("/api/clips/{clip_id}/text", dependencies=[Depends(admin)])
+def clip_text(clip_id: int):
+    clip = clips.get(clip_id)
+    if not clip:
+        raise HTTPException(404, "Extrait introuvable")
+    return {"text": clips.excerpt(clip)}
+
+
+@app.post("/api/clips/validate-many", dependencies=[Depends(admin)])
+def clip_validate_many(ids: list[int] = Body(embed=True)):
+    for clip_id in ids:
+        clips.validate(clip_id)
+    _start_processing()
+    return {"ok": True, "count": len(ids)}
+
+
+@app.post("/api/clips/{clip_id}/validate", dependencies=[Depends(admin)])
+def clip_validate(clip_id: int, fields: dict = Body(embed=True)):
     try:
-        path = shorts.render(video_id, start, end, hook or title, out)
-    except Exception as exc:
-        raise HTTPException(500, f"Fabrication impossible : {str(exc)[:300]}")
-    return {"ok": True, "file": f"/api/shorts/file/{path.parent.name}"}
+        clips.validate(clip_id, fields)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    _start_processing()
+    return {"ok": True}
 
 
-@app.get("/api/shorts/file/{name}", dependencies=[Depends(admin)])
-def short_file(name: str):
-    path = (settings.data_dir / "shorts" / Path(name).name / "short.mp4")
-    if not path.exists():
-        raise HTTPException(404, "Short introuvable")
-    return FileResponse(path, media_type="video/mp4")
+@app.post("/api/clips/{clip_id}/reject", dependencies=[Depends(admin)])
+def clip_reject(clip_id: int):
+    clips.reject(clip_id)
+    return {"ok": True}
+
+
+@app.post("/api/clips/{clip_id}/reopen", dependencies=[Depends(admin)])
+def clip_reopen(clip_id: int):
+    clips.reopen(clip_id)
+    return {"ok": True}
+
+
+@app.get("/api/clips/{clip_id}/file", dependencies=[Depends(admin)])
+def clip_file(clip_id: int):
+    with db.connect() as c:
+        row = c.execute("SELECT file FROM clips WHERE id=?", (clip_id,)).fetchone()
+    if not row or not row["file"] or not Path(row["file"]).exists():
+        raise HTTPException(404, "Vidéo introuvable")
+    return FileResponse(row["file"], media_type="video/mp4")
 
 
 @app.get("/api/archives", dependencies=[Depends(admin)])
@@ -302,7 +341,7 @@ def get_settings():
 
 @app.post("/api/settings", dependencies=[Depends(admin)])
 def post_settings(values: dict = Body(embed=True)):
-    for key in ("archive_enabled", "auto_low_risk"):
+    for key in ("archive_enabled", "auto_low_risk", "clips_all_enabled"):
         if key in values:
             db.set_setting(key, bool(values[key]))
     return {"ok": True}

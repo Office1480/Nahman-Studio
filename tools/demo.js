@@ -98,6 +98,30 @@
       proposal.status = action[2] === "approve" ? "approved" : "rejected";
       return { ok: true };
     }
+    if (route === "/api/clips/validate-many") {
+      body.ids.forEach((id) => { data.clips.find((c) => c.id === id).status = "validated"; });
+      return { ok: true };
+    }
+    const clipAction = route.match(/^\/api\/clips\/(\d+)\/(text|validate|reject|reopen)$/);
+    if (clipAction) {
+      const clip = data.clips.find((c) => c.id === Number(clipAction[1]));
+      if (clipAction[2] === "text") {
+        return { text: data.passages.filter((p) => p.v === clip.video_id && p.e > clip.start && p.s < clip.end).map((p) => p.t).join(" ") };
+      }
+      if (clipAction[2] === "validate") Object.assign(clip, body.fields, { length: Math.floor(body.fields.end - body.fields.start) });
+      clip.status = { validate: "validated", reject: "rejected", reopen: "proposed" }[clipAction[2]];
+      return { ok: true };
+    }
+    if (route === "/api/clips") {
+      const kind = url.searchParams.get("kind"), status = url.searchParams.get("status"), q = fold(url.searchParams.get("q") || "");
+      const running = ["validated", "rendering", "rendered", "uploading", "failed"];
+      const found = data.clips.filter((c) => (!kind || c.kind === kind)
+        && (status === "active" ? running.includes(c.status) : c.status === status)
+        && (!q || fold(`${c.title} ${c.summary} ${c.lesson}`).includes(q)));
+      const tally = (items, key) => items.reduce((all, c) => ({ ...all, [c[key]]: (all[c[key]] || 0) + 1 }), {});
+      return { clips: found.slice(0, 60), total: found.length, kinds: tally(data.clips.filter((c) => c.status === "proposed"), "kind"),
+               states: tally(data.clips, "status"), lessons: data.clip_lessons, all_enabled: false, can_post: false, can_detect: false };
+    }
     if (route === "/api/archives") return data.archives;
     if (route === "/api/settings") return body ? { ok: true } : { archive_enabled: false, auto_low_risk: false, validated: 0 };
     if (route === "/api/diffusion") return data.diffusion;

@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from . import ai, captions, db, embeddings, ingest, search, shabbat, telegram, thumbnails, youtube, ytdlp_source
+from . import ai, captions, clips, db, embeddings, ingest, search, shabbat, telegram, thumbnails, youtube, ytdlp_source
 from .config import Settings
 
 CAPTION_TRACK = "Français (corrigé)"
@@ -155,6 +155,7 @@ def create_proposal(settings: Settings, video_id: str, payload: dict, notify: bo
     payload = ai.normalize(payload, video["duration"])
     ingest.apply_corrections(video_id, payload["corrections"])
     store_analysis(video_id, payload)
+    clips.add(video_id, "short", payload["shorts"], video["duration"])
     kind = "archive" if video["is_archive"] else "live"
     with db.connect() as c:
         c.execute("UPDATE proposals SET status='rejected' WHERE video_id=? AND status='pending'", (video_id,))
@@ -186,6 +187,53 @@ def run_ai(settings: Settings) -> None:
             with db.connect() as c:
                 c.execute("UPDATE videos SET ai_status='failed', ai_error=? WHERE id=?", (str(exc)[:500], video_id))
             db.log(f"Échec IA sur {video['title']} : {exc}", "error")
+
+
+def run_clip_detection(settings: Settings) -> None:
+    """Cherche histoires, Shorts et moments clés : les nouveaux cours tout de suite, les archives par lots."""
+    if not settings.has_claude:
+        return
+    with db.connect() as c:
+        fresh = [r["id"] for r in c.execute("SELECT id FROM videos WHERE caption_status='fetched' AND kind!='short' "
+                                            "AND clips_status='todo' AND is_archive=0")]
+    for video_id in fresh:
+        video = _video(video_id)
+        try:
+            found = clips.store_detection(video_id, ai.detect_clips(settings, video, ingest.video_cues(video_id)),
+                                          video["duration"])
+            db.log(f"{found} extraits repérés dans {video['title']}")
+        except Exception as exc:
+            with db.connect() as c:
+                c.execute("UPDATE videos SET clips_status='failed' WHERE id=?", (video_id,))
+            db.log(f"Détection impossible sur {video['title']} : {exc}", "error")
+
+    if not db.get_setting("clips_all_enabled", False):
+        return
+    batch_id = db.get_setting("clips_batch")
+    if batch_id:
+        results = ai.collect_batch(settings, batch_id)
+        if results is None:
+            return
+        for video_id, result in results.items():
+            if isinstance(result, Exception):
+                with db.connect() as c:
+                    c.execute("UPDATE videos SET clips_status='failed' WHERE id=?", (video_id,))
+            else:
+                clips.store_detection(video_id, result, _video(video_id)["duration"])
+        db.set_setting("clips_batch", None)
+        return
+    with db.connect() as c:
+        rows = c.execute("SELECT id FROM videos WHERE caption_status='fetched' AND kind!='short' "
+                         "AND clips_status='todo' ORDER BY views DESC LIMIT 100").fetchall()
+    if rows:
+        items = [(_video(r["id"]), ingest.video_cues(r["id"])) for r in rows]
+        db.set_setting("clips_batch", ai.submit_clip_batch(settings, items))
+        with db.connect() as c:
+            c.executemany("UPDATE videos SET clips_status='queued' WHERE id=?", [(r["id"],) for r in rows])
+
+
+def run_clips(settings: Settings) -> None:
+    clips.process(settings)
 
 
 # --- Archives ----------------------------------------------------------------------------------------------------
@@ -493,7 +541,8 @@ def experiment_report() -> dict:
 
 # --- Boucle ------------------------------------------------------------------------------------------------------
 
-STEPS = (discover, check_captions, run_ai, run_archive, run_publish, run_diffusion, run_analytics)
+STEPS = (discover, check_captions, run_ai, run_clip_detection, run_archive, run_publish, run_clips, run_diffusion,
+         run_analytics)
 
 
 def tick(settings: Settings) -> None:

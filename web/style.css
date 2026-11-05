@@ -150,7 +150,29 @@ details > div { padding-top: 8px; }
 .thumb-preview { width: 100%; max-width: 420px; border-radius: 8px; margin-top: 8px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .actions .primary { flex: 1 1 200px; }
+[hidden] { display: none !important; }
 .note-box { margin-top: 12px; }
+.chip-on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.clip { padding: 12px; }
+.clip-head { display: flex; gap: 12px; align-items: flex-start; }
+.clip-head img { width: 112px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; flex: none; background: var(--surface-2); }
+.clip-pick { margin-top: 6px; flex: none; width: 18px; height: 18px; }
+.clip-text { flex: 1; min-width: 0; }
+.clip-text h2 { font-size: 1.02rem; margin-bottom: 2px; }
+.clip-text p { margin-bottom: 6px; overflow-wrap: anywhere; }
+.clip-detail { margin-top: 12px; }
+.clip-times { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0 14px; margin-top: 12px; }
+label.field > span.stepper { display: flex; gap: 6px; margin: 0; font-size: 1rem; font-weight: 400; color: var(--text); }
+.stepper input { text-align: center; min-width: 0; font-variant-numeric: tabular-nums; }
+.stepper button { flex: none; padding: 8px 9px; font-size: .88rem; }
+.clip-gap { margin-top: 14px; }
+.clip-format { border: 0; padding: 0; margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.clip-format legend { font-size: .85rem; color: var(--muted); font-weight: 600; padding: 0; margin-bottom: 4px; }
+.bulk { position: sticky; bottom: 12px; z-index: 4; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); }
+.bad-text { color: var(--bad); }
+.tag.kind-histoire { color: var(--gold); }
+.tag.kind-short { color: var(--accent); }
+.tag.kind-moment { color: var(--ok); }
 .short-line { padding: 8px 0; border-top: 1px solid var(--line); }
 .toggle { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
 .toggle input { margin-top: 5px; }
@@ -180,7 +202,7 @@ body.reader { background: var(--surface); }
   #login-button { margin-left: auto; }
   main { padding-block-start: 16px; }
   h1 { font-size: 1.6rem; }
-  .result-head img { width: 88px; }
+  .result-head img, .clip-head img { width: 76px; }
   .proposal-head { flex-direction: column; }
   .proposal-head img { width: 100%; }
 }

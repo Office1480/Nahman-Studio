@@ -102,6 +102,25 @@ CREATE TABLE IF NOT EXISTS experiment (
     video_id TEXT PRIMARY KEY, grp TEXT NOT NULL, views_start INTEGER, started_at TEXT,
     views_last INTEGER, measured_at TEXT
 );
+CREATE TABLE IF NOT EXISTS clips (
+    id INTEGER PRIMARY KEY,
+    video_id TEXT NOT NULL REFERENCES videos(id),
+    kind TEXT NOT NULL,                    -- histoire | short | moment
+    start REAL NOT NULL,
+    end REAL NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT DEFAULT '',
+    hook TEXT DEFAULT '',
+    format TEXT NOT NULL,                  -- vertical | horizontal
+    status TEXT NOT NULL DEFAULT 'proposed', -- proposed | validated | rendering | rendered | uploading | posted | rejected | failed
+    file TEXT DEFAULT '',
+    youtube_id TEXT DEFAULT '',
+    error TEXT DEFAULT '',
+    created_at TEXT,
+    decided_at TEXT,
+    posted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS clips_status ON clips(status, kind);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY, at TEXT, level TEXT, message TEXT
 );
@@ -127,6 +146,9 @@ def init(path: Path) -> None:
     _path = path
     with connect() as c:
         c.executescript(SCHEMA)
+        columns = {r["name"] for r in c.execute("PRAGMA table_info(videos)")}
+        if "clips_status" not in columns:
+            c.execute("ALTER TABLE videos ADD COLUMN clips_status TEXT DEFAULT 'todo'")
 
 
 @contextmanager

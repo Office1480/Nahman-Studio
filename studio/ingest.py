@@ -69,6 +69,15 @@ def refresh_all() -> None:
         store_transcript(row["video_id"], row["raw"], row["source"])
 
 
+def video_cues(video_id: str) -> list[dict]:
+    """Lignes de sous-titres corrigées, pour un découpage à quelques secondes près."""
+    with db.connect() as c:
+        row = c.execute("SELECT raw FROM transcripts WHERE video_id=?", (video_id,)).fetchone()
+    if not row:
+        return []
+    return [{**cue, "text": glossary.fix_misheard(cue["text"])} for cue in captions.parse_vtt(row["raw"])]
+
+
 def video_passages(video_id: str) -> list[dict]:
     with db.connect() as c:
         return [dict(r) for r in c.execute("SELECT id, start, end, text FROM passages WHERE video_id=? ORDER BY start",
