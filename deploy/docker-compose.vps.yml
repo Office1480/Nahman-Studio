@@ -1,0 +1,29 @@
+# Déploiement sur le VPS Hostinger, à côté des autres projets : HTTPS par le Traefik existant, aucun port ouvert.
+# Les limites protègent les autres applications du serveur.
+services:
+  studio:
+    build:
+      context: ..
+    restart: unless-stopped
+    env_file: ../.env
+    mem_limit: 1500m
+    cpus: 1.5
+    volumes:
+      - studio-data:/data
+    networks:
+      - root_default
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=root_default
+      - traefik.http.routers.nahman.rule=Host(`${STUDIO_HOST}`)
+      - traefik.http.routers.nahman.entrypoints=websecure
+      - traefik.http.routers.nahman.tls.certresolver=mytlschallenge
+      - traefik.http.routers.nahman.service=nahman
+      - traefik.http.services.nahman.loadbalancer.server.port=8000
+
+volumes:
+  studio-data:
+
+networks:
+  root_default:
+    external: true
