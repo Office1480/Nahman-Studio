@@ -160,6 +160,8 @@ def init(path: Path) -> None:
         columns = {r["name"] for r in c.execute("PRAGMA table_info(videos)")}
         if "clips_status" not in columns:
             c.execute("ALTER TABLE videos ADD COLUMN clips_status TEXT DEFAULT 'todo'")
+        if "claimed_at" not in {r["name"] for r in c.execute("PRAGMA table_info(clips)")}:
+            c.execute("ALTER TABLE clips ADD COLUMN claimed_at TEXT")
 
 
 @contextmanager

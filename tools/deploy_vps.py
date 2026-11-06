@@ -26,6 +26,7 @@ cd {FOLDER}
 tar xzf deploy.tar.gz && rm deploy.tar.gz
 touch .env
 grep -q '^ADMIN_PASSWORD=' .env || echo "ADMIN_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=')" >> .env
+grep -q '^AGENT_TOKEN=' .env || echo "AGENT_TOKEN=$(openssl rand -hex 24)" >> .env
 sed -i '/^STUDIO_HOST=/d;/^PUBLIC_URL=/d' .env
 echo "STUDIO_HOST={host}" >> .env
 echo "PUBLIC_URL=https://{host}" >> .env
@@ -37,7 +38,17 @@ docker compose -p nahman-studio -f docker-compose.vps.yml ps
 """
     subprocess.run([*SSH, target, script], check=True)
     archive.unlink()
+    link_agent(target, host)
     print(f"Déployé : https://{host}")
+
+
+def link_agent(target: str, host: str) -> None:
+    """Recopie le jeton du programme du PC dans le .env local, sans l'afficher."""
+    token = subprocess.run([*SSH, target, f"grep '^AGENT_TOKEN=' {FOLDER}/.env | cut -d= -f2"], check=True,
+                           capture_output=True, text=True).stdout.strip()
+    path = ROOT / ".env"
+    lines = [x for x in path.read_text(encoding="utf-8").splitlines() if not x.startswith(("AGENT_TOKEN=", "AGENT_URL="))]
+    path.write_text("\n".join([*lines, f"AGENT_URL=https://{host}", f"AGENT_TOKEN={token}"]) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

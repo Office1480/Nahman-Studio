@@ -170,6 +170,8 @@ label.field > span.stepper { display: flex; gap: 6px; margin: 0; font-size: 1rem
 .clip-format legend { font-size: .85rem; color: var(--muted); font-weight: 600; padding: 0; margin-bottom: 4px; }
 .bulk { position: sticky; bottom: 12px; z-index: 4; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); }
 .bad-text { color: var(--bad); }
+.primary-link { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+code { font-size: .86em; overflow-wrap: anywhere; }
 .tag.kind-histoire { color: var(--gold); }
 .tag.kind-short { color: var(--accent); }
 .tag.kind-moment { color: var(--ok); }

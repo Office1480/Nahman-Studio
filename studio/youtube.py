@@ -191,10 +191,10 @@ class YouTube:
         return [dict(zip(names, row)) for row in data.get("rows", [])]
 
 
-def authorize_url(settings: Settings, redirect: str) -> str:
+def authorize_url(settings: Settings, redirect: str, state: str = "") -> str:
     return str(httpx.URL("https://accounts.google.com/o/oauth2/v2/auth", params={
         "client_id": settings.google_client_id, "redirect_uri": redirect, "response_type": "code", "scope": SCOPES,
-        "access_type": "offline", "prompt": "consent"}))
+        "access_type": "offline", "prompt": "consent", "state": state}))
 
 
 def exchange_code(settings: Settings, code: str, redirect: str) -> str:

@@ -389,7 +389,8 @@ async function viewClips() {
   view.innerHTML = `
     <h1>Extraits</h1>
     <p class="muted">Histoires, Shorts et moments clés repérés dans ${data.lessons} cours. Regarde, ajuste, valide : l'extraction et la publication suivent toutes seules, jamais pendant Chabbat.</p>
-    ${data.can_post || me.demo ? "" : `<p class="summary">La chaîne YouTube n'est pas encore connectée : les extraits validés seront fabriqués, puis publiés dès qu'elle le sera.</p>`}
+    ${data.can_post || me.demo ? "" : `<p class="summary">La chaîne YouTube n'est pas encore connectée : les extraits validés seront fabriqués, puis publiés dès qu'elle le sera. <a href="#etat">La connecter</a></p>`}
+    ${data.agent?.enabled && !data.agent.online ? `<p class="summary">Ton PC n'est pas connecté : les extraits validés attendent qu'il soit allumé.</p>` : ""}
     <div class="chips" role="group" aria-label="État">${Object.entries(CLIP_STATES).map(([id, label]) => `<button type="button" class="chip ${status === id ? "chip-on" : ""}" data-state="${id}" aria-pressed="${status === id}">${esc(label)} · ${counts[id]}</button>`).join("")}</div>
     <div class="chips" role="group" aria-label="Sorte d'extrait">${Object.entries(CLIP_KINDS).map(([id, label]) => `<button type="button" class="chip ${kind === id ? "chip-on" : ""}" data-kind="${id}" aria-pressed="${kind === id}">${esc(label)}${status === "proposed" ? ` · ${kindCount(id)}` : ""}</button>`).join("")}</div>
     <form class="searchbar" id="clip-search"><input type="search" id="clip-q" placeholder="Chercher dans les titres, par exemple : Baal Chem Tov" aria-label="Chercher un extrait" value="${esc(q)}"><button type="submit">Chercher</button></form>
@@ -516,8 +517,29 @@ async function viewInsights() {
     </tbody></table>` : `<p class="empty">Disponible une fois la chaîne connectée.</p>`}</div>`;
 }
 
+function connectionsForm(c) {
+  const secret = (name, label, done) => `<label class="field"><span>${esc(label)}${done ? " (déjà enregistré)" : ""}</span><input type="password" data-secret="${name}" autocomplete="off"></label>`;
+  const agent = c.agent.online ? "Ton PC est connecté et prêt à extraire." : c.agent.enabled ? "Ton PC n'est pas connecté pour l'instant." : "Pas encore installé.";
+  return `<div class="card"><h2>Mes clés</h2>
+    <p class="small muted">Elles restent sur ton serveur et ne s'affichent plus une fois enregistrées.</p>
+    <form id="keys-form">
+      ${secret("ANTHROPIC_API_KEY", "Clé Claude", c.claude)}
+      ${secret("GOOGLE_CLIENT_ID", "Identifiant client Google", c.google_app)}
+      ${secret("GOOGLE_CLIENT_SECRET", "Code secret client Google", c.google_app)}
+      ${secret("TELEGRAM_BOT_TOKEN", "Jeton du bot Telegram", c.telegram)}
+      <label class="field"><span>Ton identifiant Telegram</span><input type="text" data-secret="TELEGRAM_CHAT_ID" autocomplete="off"></label>
+      <button class="primary" type="submit">Enregistrer</button>
+    </form>
+    <p class="small muted clip-gap">Adresse de redirection à donner à Google :<br><code>${esc(c.redirect_uri)}</code></p>
+    ${c.google_app && !c.youtube ? `<a class="button primary-link" href="/auth/google/start">Connecter ma chaîne YouTube</a>` : ""}
+    ${c.youtube ? `<p class="small"><span class="tag ok">Chaîne connectée</span></p>` : ""}
+    <p class="small muted clip-gap">Extraction des vidéos : ${esc(agent)}</p>
+  </div>`;
+}
+
 async function viewStatus() {
   const s = await api("/api/status");
+  const connection = me.demo ? null : await api("/api/connections");
   const key = (ok, label, missing) => `<div class="toggle"><span class="tag ${ok ? "ok" : "warn"}">${ok ? "Branché" : "À brancher"}</span><span>${esc(label)}${ok ? "" : `<br><span class="small muted">${esc(missing)}</span>`}</span></div>`;
   const videos = (s.videos.long || 0) + (s.videos.live || 0);
   view.innerHTML = `
@@ -535,6 +557,7 @@ async function viewStatus() {
       ${key(s.keys.youtube, "Chaîne YouTube", "Sans elle, rien ne peut être publié. La détection marche déjà.")}
       ${key(s.keys.telegram, "Telegram", "Sans lui, les validations se font uniquement ici.")}
     </div>
+    ${connection ? connectionsForm(connection) : ""}
     <div class="card"><h2>En attente de sous-titres</h2>
       ${s.waiting_captions.length ? s.waiting_captions.map((v) => `<p>${esc(v.title)}<br><span class="small muted">Dernière vérification : ${v.caption_checked_at ? new Date(v.caption_checked_at).toLocaleString("fr-FR") : "pas encore"}</span></p>`).join("") : `<p class="muted">Aucune vidéo en attente.</p>`}
       ${me.demo ? "" : `<button type="button" id="tick">Vérifier maintenant</button>`}
@@ -542,6 +565,14 @@ async function viewStatus() {
     <div class="card"><h2>Journal</h2>
       ${s.events.length ? s.events.map((e) => `<p class="small"><span class="tag ${e.level === "error" ? "bad" : e.level === "warning" ? "warn" : ""}">${new Date(e.at).toLocaleString("fr-FR")}</span> ${esc(e.message)}</p>`).join("") : `<p class="muted">Rien pour l'instant.</p>`}
     </div>`;
+  $("#keys-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries($$("[data-secret]", view).map((input) => [input.dataset.secret, input.value]).filter(([, value]) => value.trim()));
+    if (!Object.keys(values).length) return toast("Colle au moins une clé.");
+    await api("/api/connections", { values });
+    toast("Enregistré. L'application redémarre…");
+    setTimeout(() => location.reload(), 6000);
+  });
   $("#tick")?.addEventListener("click", async () => {
     await api("/api/tick", {});
     toast("Vérification lancée.");

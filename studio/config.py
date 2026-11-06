@@ -16,6 +16,26 @@ def _load_dotenv() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"'))
 
 
+SECRET_KEYS = ("ANTHROPIC_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN",
+               "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_CHANNEL_ID")
+
+
+def _read_secrets(data_dir: Path) -> dict:
+    path = data_dir / "secrets.env"
+    if not path.exists():
+        return {}
+    pairs = (line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines() if "=" in line)
+    return {key: value for key, value in pairs if key in SECRET_KEYS}
+
+
+def save_secrets(data_dir: Path, values: dict) -> None:
+    """Clés saisies dans l'application : gardées avec les données, jamais renvoyées au navigateur."""
+    merged = {**_read_secrets(data_dir), **values}
+    path = data_dir / "secrets.env"
+    path.write_text("".join(f"{key}={value}\n" for key, value in merged.items()), encoding="utf-8")
+    path.chmod(0o600)
+
+
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
@@ -39,6 +59,8 @@ class Settings:
     poll_minutes: int
     caption_check_minutes: int
     ask_daily_limit: int
+    agent_token: str
+    agent_url: str
 
     @property
     def db_path(self) -> Path:
@@ -66,6 +88,9 @@ def load() -> Settings:
     env = os.environ.get
     data_dir = Path(env("DATA_DIR", str(ROOT / "data")))
     data_dir.mkdir(parents=True, exist_ok=True)
+    for key, value in _read_secrets(data_dir).items():
+        if not env(key):
+            os.environ[key] = value
     return Settings(
         data_dir=data_dir,
         channel_id=env("YOUTUBE_CHANNEL_ID", "UCl6DCmZEozwVnxv3MVYbJnA"),
@@ -88,4 +113,6 @@ def load() -> Settings:
         poll_minutes=int(env("POLL_MINUTES", "15")),
         caption_check_minutes=int(env("CAPTION_CHECK_MINUTES", "180")),
         ask_daily_limit=int(env("ASK_DAILY_LIMIT", "200")),
+        agent_token=env("AGENT_TOKEN", ""),
+        agent_url=env("AGENT_URL", "").rstrip("/"),
     )

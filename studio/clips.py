@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import captions, db, glossary, ingest, search, shabbat, telegram, youtube
@@ -13,6 +14,7 @@ from .config import Settings
 KINDS = ("histoire", "short", "moment")
 LIMITS = {"histoire": (20, 1800), "short": (15, 180), "moment": (45, 900)}
 POST_PER_PASS = 3
+CLAIM_HOURS = 2
 _busy = threading.Lock()
 
 
@@ -191,9 +193,14 @@ def _ffmpeg() -> str:
     return found
 
 
-def render(settings: Settings, clip: dict) -> Path:
+class BotCheck(RuntimeError):
+    """YouTube demande une vérification anti-robots : on ne la contourne pas, on réessaie plus tard."""
+
+
+def render(settings: Settings, clip: dict, cues: list[dict] | None = None) -> Path:
     """Télécharge le passage et fabrique la vidéo finale. Il faut une connexion domestique pour yt-dlp."""
     ffmpeg = _ffmpeg()
+    cues = ingest.video_cues(clip["video_id"]) if cues is None else cues
     work = settings.data_dir / "clips" / str(clip["id"])
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
@@ -213,8 +220,8 @@ def render(settings: Settings, clip: dict) -> Path:
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
         if download.returncode:
             if "not a bot" in download.stderr:
-                raise RuntimeError("YouTube a demandé une vérification anti-robots. Réessaie plus tard, ou dépose le "
-                                   f"fichier du cours dans data/sources/{clip['video_id']}.mp4.")
+                raise BotCheck("YouTube a demandé une vérification anti-robots. Réessaie plus tard, ou dépose le "
+                               f"fichier du cours dans data/sources/{clip['video_id']}.mp4.")
             reason = next((x for x in download.stderr.splitlines() if x.startswith("ERROR")), download.stderr[-200:])
             raise RuntimeError(f"Téléchargement refusé : {reason[:300]}")
 
@@ -226,7 +233,7 @@ def render(settings: Settings, clip: dict) -> Path:
     hook = clip["hook"] if shape == "vertical" else clip["title"]
     # Les lives récents sont filmés à la verticale : les sous-titres suivent l'image réelle, pas le format demandé.
     style = "vertical" if shape == "vertical" or height > width else "horizontal"
-    (work / "subs.ass").write_text(build_ass(ingest.video_cues(clip["video_id"]), start, end, hook, style), encoding="utf-8")
+    (work / "subs.ass").write_text(build_ass(cues, start, end, hook, style), encoding="utf-8")
     if shape == "vertical":
         graph = ("[0:v]split[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=30[bg];"
                  "[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,subtitles=subs.ass[v]")
@@ -260,6 +267,39 @@ def _set(clip_id: int, **fields) -> None:
         c.execute(f"UPDATE clips SET {sets} WHERE id=?", (*fields.values(), clip_id))
 
 
+def claim_next(settings: Settings) -> dict | None:
+    """Donne le prochain extrait validé au programme du PC, avec ses sous-titres. Rien pendant Chabbat."""
+    db.set_setting("agent_seen", db.now())
+    if shabbat.is_blocked(settings):
+        return None
+    stale = (datetime.now(timezone.utc) - timedelta(hours=CLAIM_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with db.connect() as c:
+        c.execute("UPDATE clips SET status='validated' WHERE status='rendering' AND claimed_at<?", (stale,))
+        row = c.execute("SELECT id FROM clips WHERE status='validated' ORDER BY decided_at LIMIT 1").fetchone()
+        if not row:
+            return None
+        c.execute("UPDATE clips SET status='rendering', claimed_at=? WHERE id=?", (db.now(), row["id"]))
+    clip = get(row["id"])
+    return {**clip, "cues": [c for c in ingest.video_cues(clip["video_id"])
+                             if c["end"] > clip["start"] and c["start"] < clip["end"]]}
+
+
+def complete(clip_id: int, path: Path) -> None:
+    _set(clip_id, status="rendered", file=str(path), error="")
+
+
+def agent_failed(clip_id: int, error: str, retry: bool) -> None:
+    _set(clip_id, status="validated" if retry else "failed", error=error[:400])
+
+
+def agent_status(settings: Settings) -> dict:
+    seen = db.get_setting("agent_seen")
+    age = None
+    if seen:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(seen.replace("Z", "+00:00"))).total_seconds()
+    return {"enabled": bool(settings.agent_token), "online": age is not None and age < 180, "last_seen": seen}
+
+
 def process(settings: Settings, api: "youtube.YouTube | None" = None, make=render) -> None:
     """Extrait puis publie les extraits validés. Une seule passe à la fois, jamais pendant Chabbat."""
     if not _busy.acquire(blocking=False):
@@ -267,8 +307,10 @@ def process(settings: Settings, api: "youtube.YouTube | None" = None, make=rende
     try:
         if shabbat.is_blocked(settings):
             return
+        # Avec le programme du PC, le serveur ne fait que publier ce qu'il a reçu.
+        statuses = "('rendered')" if settings.agent_token else "('validated','rendered')"
         with db.connect() as c:
-            ids = [r["id"] for r in c.execute("SELECT id FROM clips WHERE status IN ('validated','rendered') "
+            ids = [r["id"] for r in c.execute(f"SELECT id FROM clips WHERE status IN {statuses} "
                                               "ORDER BY decided_at LIMIT ?", (POST_PER_PASS,))]
         for clip_id in ids:
             if not _advance(settings, clip_id, api, make):
@@ -295,7 +337,8 @@ def _advance(settings: Settings, clip_id: int, api, make) -> bool:
         client = api or youtube.YouTube(settings)
         tags = ["Breslev", "Rabbi Nahman", "Nathan Uzan"]
         video_id = client.upload_video(path, clip["title"], description(settings, clip), tags)
-        _set(clip_id, status="posted", youtube_id=video_id, posted_at=db.now(), error="")
+        _set(clip_id, status="posted", youtube_id=video_id, posted_at=db.now(), error="", file="")
+        Path(path).unlink(missing_ok=True)
         db.log(f"Extrait publié : {clip['title']}")
         if settings.has_telegram:
             telegram.Bot(settings).send(f"Extrait publié : <b>{clip['title']}</b>\nhttps://youtu.be/{video_id}")

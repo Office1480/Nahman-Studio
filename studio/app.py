@@ -3,13 +3,15 @@ import hashlib
 import hmac
 import html
 import json
+import os
 import re
+import secrets
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import ai, captions, clips, config, db, ingest, pipeline, search, shabbat, thumbnails, youtube
@@ -252,10 +254,87 @@ def _start_processing() -> None:
     threading.Thread(target=clips.process, args=(settings,), daemon=True).start()
 
 
+def _restart() -> None:
+    """Relance l'application pour qu'elle lise les nouvelles clés ; Docker la redémarre aussitôt."""
+    threading.Timer(1.5, os._exit, args=(0,)).start()
+
+
+def _redirect_uri() -> str:
+    return f"{settings.public_url}/auth/google/callback"
+
+
+@app.get("/api/connections", dependencies=[Depends(admin)])
+def connections():
+    return {"claude": settings.has_claude, "google_app": bool(settings.google_client_id and settings.google_client_secret),
+            "youtube": settings.has_youtube, "telegram": settings.has_telegram, "redirect_uri": _redirect_uri(),
+            "agent": clips.agent_status(settings)}
+
+
+@app.post("/api/connections", dependencies=[Depends(admin)])
+def save_connections(values: dict = Body(embed=True)):
+    clean = {k: str(v).strip() for k, v in values.items()
+             if k in config.SECRET_KEYS and k != "GOOGLE_REFRESH_TOKEN" and str(v).strip()}
+    if clean:
+        config.save_secrets(settings.data_dir, clean)
+        _restart()
+    return {"ok": True, "saved": sorted(clean)}
+
+
+@app.get("/auth/google/start", dependencies=[Depends(admin)])
+def google_start():
+    state = secrets.token_urlsafe(24)
+    db.set_setting("google_state", state)
+    return RedirectResponse(youtube.authorize_url(settings, _redirect_uri(), state))
+
+
+@app.get("/auth/google/callback")
+def google_callback(code: str = "", state: str = "", error: str = ""):
+    expected = db.get_setting("google_state")
+    if error or not code or not expected or not hmac.compare_digest(state, expected):
+        return _page("Connexion refusée", "<h1>La connexion n'a pas abouti</h1><p>Recommence depuis l'onglet État.</p>")
+    token = youtube.exchange_code(settings, code, _redirect_uri())
+    db.set_setting("google_state", None)
+    config.save_secrets(settings.data_dir, {"GOOGLE_REFRESH_TOKEN": token})
+    _restart()
+    return _page("Chaîne connectée", "<h1>Ta chaîne YouTube est connectée</h1><p>Tu peux revenir à l'application.</p>")
+
+
+def agent_only(request: Request) -> None:
+    token = request.headers.get("X-Agent-Token", "")
+    if not settings.agent_token or not hmac.compare_digest(token, settings.agent_token):
+        raise HTTPException(401, "Jeton du programme incorrect")
+
+
+@app.get("/api/agent/next", dependencies=[Depends(agent_only)])
+def agent_next():
+    return {"clip": clips.claim_next(settings)}
+
+
+@app.post("/api/agent/{clip_id}/file", dependencies=[Depends(agent_only)])
+async def agent_file(clip_id: int, request: Request):
+    if not clips.get(clip_id):
+        raise HTTPException(404, "Extrait introuvable")
+    folder = settings.data_dir / "clips" / str(clip_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "clip.mp4"
+    with open(path, "wb") as target:
+        async for chunk in request.stream():
+            target.write(chunk)
+    clips.complete(clip_id, path)
+    _start_processing()
+    return {"ok": True}
+
+
+@app.post("/api/agent/{clip_id}/fail", dependencies=[Depends(agent_only)])
+def agent_fail(clip_id: int, error: str = Body(), retry: bool = Body()):
+    clips.agent_failed(clip_id, error, retry)
+    return {"ok": True}
+
+
 @app.get("/api/clips", dependencies=[Depends(admin)])
 def clip_list(kind: str = "", status: str = "proposed", q: str = "", offset: int = 0):
     return {**clips.listing(kind, status, q.strip(), offset=offset), "all_enabled": db.get_setting("clips_all_enabled", False),
-            "can_post": settings.has_youtube, "can_detect": settings.has_claude}
+            "can_post": settings.has_youtube, "can_detect": settings.has_claude, "agent": clips.agent_status(settings)}
 
 
 @app.get("/api/clips/{clip_id}/text", dependencies=[Depends(admin)])

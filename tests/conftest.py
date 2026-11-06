@@ -12,7 +12,7 @@ from studio import config, db  # noqa: E402
 @pytest.fixture
 def settings(tmp_path, monkeypatch):
     for key in ("ANTHROPIC_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN",
-                "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "ADMIN_PASSWORD"):
+                "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "ADMIN_PASSWORD", "AGENT_TOKEN", "AGENT_URL"):
         monkeypatch.setenv(key, "")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     loaded = config.load()

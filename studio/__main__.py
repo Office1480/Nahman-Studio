@@ -5,7 +5,7 @@ import time
 import urllib.parse
 import webbrowser
 
-from . import config, db, embeddings, ingest, pipeline, youtube, ytdlp_source
+from . import agent, config, db, embeddings, ingest, pipeline, youtube, ytdlp_source
 
 
 def import_channel(settings) -> None:
@@ -100,6 +100,7 @@ def main() -> None:
     subs.add_argument("--pause", type=float, default=5)
     lives = commands.add_parser("latest-lives")
     lives.add_argument("--count", type=int, default=10)
+    commands.add_parser("agent")
     commands.add_parser("auth-youtube")
     commands.add_parser("tick")
     commands.add_parser("reindex")
@@ -115,6 +116,8 @@ def main() -> None:
         import_channel(settings)
     elif args.command == "import-subs":
         import_subs(settings, args.limit, args.pause)
+    elif args.command == "agent":
+        agent.run(settings)
     elif args.command == "latest-lives":
         latest_lives(settings, args.count)
     elif args.command == "auth-youtube":
